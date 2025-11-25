@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.text.Font?>
+
+<BorderPane xmlns:fx="http://javafx.com/fxml" 
+            fx:controller="com.cpu.simulator.ui.MainController"
+            prefHeight="800.0" prefWidth="1200.0">
+    
+    <!-- Top: Control Panel -->
+    <top>
+        <VBox spacing="10" style="-fx-background-color: #f0f0f0; -fx-padding: 10;">
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Button fx:id="loadButton" text="Load Program" onAction="#handleLoadFile" 
+                        style="-fx-font-size: 14px;"/>
+                <Button fx:id="stepButton" text="Step" onAction="#handleStep" 
+                        style="-fx-font-size: 14px;"/>
+                <Button fx:id="runButton" text="Run" onAction="#handleRun" 
+                        style="-fx-font-size: 14px;"/>
+                <Button fx:id="resetButton" text="Reset" onAction="#handleReset" 
+                        style="-fx-font-size: 14px;"/>
+                <Separator orientation="VERTICAL"/>
+                <Label fx:id="clockLabel" text="Clock Cycle: 0" 
+                       style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+                <Label fx:id="pcLabel" text="PC: 0" 
+                       style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+            </HBox>
+        </VBox>
+    </top>
+    
+    <!-- Center: Main Display Area -->
+    <center>
+        <SplitPane dividerPositions="0.3, 0.7" orientation="HORIZONTAL">
+            
+            <!-- Left: Instruction Queue -->
+            <VBox spacing="5">
+                <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+                <Label text="Instruction Queue" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <ListView fx:id="instructionList" VBox.vgrow="ALWAYS"/>
+            </VBox>
+            
+            <!-- Middle: Reservation Stations and ROB -->
+            <VBox spacing="10">
+                <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+                
+                <!-- Reservation Stations -->
+                <Label text="Reservation Stations" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                
+                <Label text="Add/Sub Stations" style="-fx-font-size: 12px; -fx-font-weight: bold;"/>
+                <TableView fx:id="addSubTable" prefHeight="120">
+                    <placeholder><Label text="No data"/></placeholder>
+                </TableView>
+                
+                <Label text="Mul/Div Stations" style="-fx-font-size: 12px; -fx-font-weight: bold;"/>
+                <TableView fx:id="mulDivTable" prefHeight="100">
+                    <placeholder><Label text="No data"/></placeholder>
+                </TableView>
+                
+                <Label text="Load Stations" style="-fx-font-size: 12px; -fx-font-weight: bold;"/>
+                <TableView fx:id="loadTable" prefHeight="100">
+                    <placeholder><Label text="No data"/></placeholder>
+                </TableView>
+                
+                <Label text="Store Stations" style="-fx-font-size: 12px; -fx-font-weight: bold;"/>
+                <TableView fx:id="storeTable" prefHeight="100">
+                    <placeholder><Label text="No data"/></placeholder>
+                </TableView>
+                
+                <!-- Reorder Buffer -->
+                <Label text="Reorder Buffer (ROB)" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <TableView fx:id="robTable" VBox.vgrow="ALWAYS">
+                    <placeholder><Label text="No data"/></placeholder>
+                </TableView>
+            </VBox>
+            
+            <!-- Right: Registers and Log -->
+            <VBox spacing="10">
+                <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+                
+                <Label text="Register File" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <TableView fx:id="registerTable" prefHeight="300">
+                    <placeholder><Label text="No data"/></placeholder>
+                </TableView>
+                
+                <Label text="Execution Log" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <TextArea fx:id="logArea" VBox.vgrow="ALWAYS" editable="false" 
+                         wrapText="true" style="-fx-font-family: 'Courier New';"/>
+            </VBox>
+            
+        </SplitPane>
+    </center>
+    
+</BorderPane>

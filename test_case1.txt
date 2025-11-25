@@ -1,0 +1,11 @@
+# Test Case 1: Sequential Code
+# This test case demonstrates a sequence of floating-point operations
+# with various dependencies (RAW, WAR, WAW hazards)
+
+L.D F6, 0(R2)
+L.D F2, 8(R2)
+MUL.D F0, F2, F4
+SUB.D F8, F2, F6
+DIV.D F10, F0, F6
+ADD.D F6, F8, F2
+S.D F6, 8(R2)
