@@ -1,0 +1,10 @@
+# Test Program 2: Loop with Integer Operations
+# Demonstrates integer operations, loads, stores, and branches
+
+ADDI R1, R0, 0
+ADDI R2, R0, 100
+L.D F0, 0(R1)
+MUL.D F0, F0, F0
+S.D F0, 0(R1)
+ADDI R1, R1, 8
+BNE R1, R2, -20

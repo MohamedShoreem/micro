@@ -1,0 +1,9 @@
+# Test Program 1: Simple FP Operations with RAW Hazard
+# Demonstrates basic floating point operations and RAW hazard handling
+
+L.D F0, 0(R1)
+L.D F2, 8(R1)
+MUL.D F4, F0, F2
+SUB.D F6, F0, F2
+DIV.D F8, F0, F2
+ADD.D F10, F4, F6
