@@ -32,28 +32,31 @@ public class SimulatorConfig {
      * Create configuration with default values
      */
     public SimulatorConfig() {
-        // Default latencies (in cycles)
+        // Default execution cycles (not including issue cycle)
+        // Total latency = execution cycles + 1 (for issue)
         latencies = new HashMap<>();
         
-        // Floating-point arithmetic (typical latencies)
+        // Floating-point arithmetic - double precision (execution cycles only)
         latencies.put(Instruction.Operation.ADD_D, 2);
         latencies.put(Instruction.Operation.SUB_D, 2);
         latencies.put(Instruction.Operation.MUL_D, 10);
         latencies.put(Instruction.Operation.DIV_D, 40);
         
+        // Floating-point arithmetic - single precision (execution cycles only)
+        latencies.put(Instruction.Operation.ADD_S, 2);
+        latencies.put(Instruction.Operation.SUB_S, 2);
+        latencies.put(Instruction.Operation.MUL_S, 10);
+        latencies.put(Instruction.Operation.DIV_S, 40);
+        
         // Integer arithmetic
-        latencies.put(Instruction.Operation.ADD, 1);
-        latencies.put(Instruction.Operation.SUB, 1);
-        latencies.put(Instruction.Operation.ADDI, 1);
         latencies.put(Instruction.Operation.DADDI, 1);
         latencies.put(Instruction.Operation.DSUBI, 1);
-        latencies.put(Instruction.Operation.MUL, 10);
-        latencies.put(Instruction.Operation.DIV, 40);
         
         // Memory operations (base latency, cache will add more)
         latencies.put(Instruction.Operation.LW, 1);
         latencies.put(Instruction.Operation.SW, 1);
         latencies.put(Instruction.Operation.LD, 1);
+        latencies.put(Instruction.Operation.SD, 1);
         latencies.put(Instruction.Operation.L_D, 1);
         latencies.put(Instruction.Operation.L_S, 1);
         latencies.put(Instruction.Operation.S_D, 1);
@@ -63,8 +66,8 @@ public class SimulatorConfig {
         latencies.put(Instruction.Operation.BEQ, 1);
         latencies.put(Instruction.Operation.BNE, 1);
         
-        // Default reservation station counts
-        numAddSubStations = 3;
+        // Default reservation station counts (at least 2 for each type)
+        numAddSubStations = 2;
         numMulDivStations = 2;
         numLoadStations = 2;
         numStoreStations = 2;

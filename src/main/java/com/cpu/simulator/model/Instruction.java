@@ -15,22 +15,17 @@ public class Instruction {
     // Operation types
     public enum Operation {
         // Integer Arithmetic
-        ADD, SUB, ADDI, MUL, DIV,
         DADDI, DSUBI,  // Double-word integer operations
         // Floating Point Arithmetic (Double Precision)
         ADD_D, SUB_D, MUL_D, DIV_D,
-        // Logical
-        AND, OR, XOR,
+        // Floating Point Arithmetic (Single Precision)
+        ADD_S, SUB_S, MUL_S, DIV_S,
         // Integer Memory Operations
-        LW, SW, LD,  // Load Word, Store Word, Load Doubleword
+        LW, SW, LD, SD,  // Load Word, Store Word, Load Doubleword, Store Doubleword
         // Floating Point Memory Operations
         L_D, L_S, S_D, S_S,  // Load/Store Double, Load/Store Single
         // Branch
-        BEQ, BNE,
-        // Jump
-        J, JAL,
-        // No operation
-        NOP
+        BEQ, BNE
     }
     
     // Register types
@@ -58,6 +53,7 @@ public class Instruction {
     
     // For branch instructions - label support
     private String label;  // Branch target label
+    private String definedLabel; // Label defined at this instruction (e.g. "LOOP:")
     
     // Execution tracking
     private int latency;  // Execution latency for this instruction
@@ -75,6 +71,7 @@ public class Instruction {
         this.src1RegType = RegisterType.INTEGER;
         this.src2RegType = RegisterType.INTEGER;
         this.label = null;
+        this.definedLabel = null;
     }
     
     /**
@@ -112,7 +109,8 @@ public class Instruction {
      * @return true if store
      */
     public boolean isStore() {
-        return operation == Operation.SW || operation == Operation.S_D || operation == Operation.S_S;
+        return operation == Operation.SW || operation == Operation.SD ||
+               operation == Operation.S_D || operation == Operation.S_S;
     }
     
     /**
@@ -160,6 +158,9 @@ public class Instruction {
     
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
+    
+    public String getDefinedLabel() { return definedLabel; }
+    public void setDefinedLabel(String definedLabel) { this.definedLabel = definedLabel; }
     
     public int getLatency() { return latency; }
     public void setLatency(int latency) { this.latency = latency; }

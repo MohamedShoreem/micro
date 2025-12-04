@@ -72,13 +72,18 @@ public class InstructionParser {
                 }
                 
                 // Remove label if present
+                String definedLabel = null;
                 if (line.contains(":") && !line.contains("(")) {
+                    definedLabel = line.substring(0, line.indexOf(":")).trim();
                     line = line.substring(line.indexOf(":") + 1).trim();
                 }
                 
                 if (!line.isEmpty()) {
                     Instruction instruction = parseLine(line);
                     if (instruction != null) {
+                        if (definedLabel != null) {
+                            instruction.setDefinedLabel(definedLabel);
+                        }
                         instructions.add(instruction);
                     }
                 }
@@ -135,30 +140,7 @@ public class InstructionParser {
         try {
             Instruction inst;
             switch (opcode) {
-                // Integer R-type instructions
-                case "ADD":
-                    inst = new Instruction(Operation.ADD, InstructionType.R_TYPE);
-                    break;
-                case "SUB":
-                    inst = new Instruction(Operation.SUB, InstructionType.R_TYPE);
-                    break;
-                case "MUL":
-                    inst = new Instruction(Operation.MUL, InstructionType.R_TYPE);
-                    break;
-                case "DIV":
-                    inst = new Instruction(Operation.DIV, InstructionType.R_TYPE);
-                    break;
-                case "AND":
-                    inst = new Instruction(Operation.AND, InstructionType.R_TYPE);
-                    break;
-                case "OR":
-                    inst = new Instruction(Operation.OR, InstructionType.R_TYPE);
-                    break;
-                case "XOR":
-                    inst = new Instruction(Operation.XOR, InstructionType.R_TYPE);
-                    break;
-                
-                // Floating-point arithmetic (R-type with dot notation)
+                // Floating-point arithmetic - Double Precision (R-type)
                 case "ADD.D":
                     inst = new Instruction(Operation.ADD_D, InstructionType.R_TYPE);
                     inst.setDestRegType(RegisterType.FLOATING);
@@ -184,10 +166,33 @@ public class InstructionParser {
                     inst.setSrc2RegType(RegisterType.FLOATING);
                     break;
                 
-                // Integer I-type instructions
-                case "ADDI":
-                    inst = new Instruction(Operation.ADDI, InstructionType.I_TYPE);
+                // Floating-point arithmetic - Single Precision (R-type)
+                case "ADD.S":
+                    inst = new Instruction(Operation.ADD_S, InstructionType.R_TYPE);
+                    inst.setDestRegType(RegisterType.FLOATING);
+                    inst.setSrc1RegType(RegisterType.FLOATING);
+                    inst.setSrc2RegType(RegisterType.FLOATING);
                     break;
+                case "SUB.S":
+                    inst = new Instruction(Operation.SUB_S, InstructionType.R_TYPE);
+                    inst.setDestRegType(RegisterType.FLOATING);
+                    inst.setSrc1RegType(RegisterType.FLOATING);
+                    inst.setSrc2RegType(RegisterType.FLOATING);
+                    break;
+                case "MUL.S":
+                    inst = new Instruction(Operation.MUL_S, InstructionType.R_TYPE);
+                    inst.setDestRegType(RegisterType.FLOATING);
+                    inst.setSrc1RegType(RegisterType.FLOATING);
+                    inst.setSrc2RegType(RegisterType.FLOATING);
+                    break;
+                case "DIV.S":
+                    inst = new Instruction(Operation.DIV_S, InstructionType.R_TYPE);
+                    inst.setDestRegType(RegisterType.FLOATING);
+                    inst.setSrc1RegType(RegisterType.FLOATING);
+                    inst.setSrc2RegType(RegisterType.FLOATING);
+                    break;
+                
+                // Integer I-type instructions
                 case "DADDI":
                     inst = new Instruction(Operation.DADDI, InstructionType.I_TYPE);
                     break;
@@ -204,6 +209,9 @@ public class InstructionParser {
                     break;
                 case "LD":
                     inst = new Instruction(Operation.LD, InstructionType.I_TYPE);
+                    break;
+                case "SD":
+                    inst = new Instruction(Operation.SD, InstructionType.I_TYPE);
                     break;
                 
                 // Floating-point memory operations
@@ -236,18 +244,6 @@ public class InstructionParser {
                     inst = new Instruction(Operation.BNE, InstructionType.I_TYPE);
                     break;
                 
-                // J-type instructions
-                case "J":
-                    inst = new Instruction(Operation.J, InstructionType.J_TYPE);
-                    break;
-                case "JAL":
-                    inst = new Instruction(Operation.JAL, InstructionType.J_TYPE);
-                    break;
-                
-                case "NOP":
-                    inst = new Instruction(Operation.NOP, InstructionType.R_TYPE);
-                    break;
-                
                 default:
                     System.err.println("Unknown opcode: " + opcode);
                     return null;
@@ -271,8 +267,13 @@ public class InstructionParser {
                     // Format: ADD.D F0, F2, F4 or ADD R1, R2, R3
                     if (parts.length >= 4) {
                         instruction.setRd(parseRegister(parts[1]));
+                        instruction.setDestRegType(getRegisterType(parts[1]));
+                        
                         instruction.setRs(parseRegister(parts[2]));
+                        instruction.setSrc1RegType(getRegisterType(parts[2]));
+                        
                         instruction.setRt(parseRegister(parts[3]));
+                        instruction.setSrc2RegType(getRegisterType(parts[3]));
                     }
                     break;
                 
@@ -287,15 +288,37 @@ public class InstructionParser {
                         // Format: L.D F6, 0(R2) or LW R1, 4(R2)
                         if (parts.length >= 3) {
                             instruction.setRt(parseRegister(parts[1]));  // Dest/source register
+                            // For Load, Rt is Dest. For Store, Rt is Src1.
+                            if (instruction.isStore()) {
+                                instruction.setSrc1RegType(getRegisterType(parts[1]));
+                            } else {
+                                instruction.setDestRegType(getRegisterType(parts[1]));
+                            }
+                            
                             instruction.setImmediate(Integer.parseInt(parts[2]));  // Offset
+                            
                             instruction.setRs(parseRegister(parts[3]));  // Base register
+                            instruction.setSrc2RegType(getRegisterType(parts[3])); // Base is usually Src2 or Src1?
+                            // In Instruction.java logic:
+                            // Load: Dest=Rt, Src1=Rs (Base)
+                            // Store: Src1=Rt (Value), Src2=Rs (Base)
+                            // Let's align with that.
+                            if (instruction.isStore()) {
+                                instruction.setSrc2RegType(getRegisterType(parts[3]));
+                            } else {
+                                instruction.setSrc1RegType(getRegisterType(parts[3]));
+                            }
                         }
                     } else if (instruction.getOperation() == Operation.BEQ ||
                                instruction.getOperation() == Operation.BNE) {
                         // Format: BEQ R1, R2, LOOP or BNE R1, R2, 100
                         if (parts.length >= 4) {
                             instruction.setRs(parseRegister(parts[1]));
+                            instruction.setSrc1RegType(getRegisterType(parts[1]));
+                            
                             instruction.setRt(parseRegister(parts[2]));
+                            instruction.setSrc2RegType(getRegisterType(parts[2]));
+                            
                             // Try to parse as number, if fails, it's a label
                             try {
                                 instruction.setImmediate(Integer.parseInt(parts[3]));
@@ -314,7 +337,11 @@ public class InstructionParser {
                         // Format: ADDI R1, R2, 10 or DADDI R1, R1, 24
                         if (parts.length >= 4) {
                             instruction.setRt(parseRegister(parts[1]));  // Dest
+                            instruction.setDestRegType(getRegisterType(parts[1]));
+                            
                             instruction.setRs(parseRegister(parts[2]));  // Source
+                            instruction.setSrc1RegType(getRegisterType(parts[2]));
+                            
                             instruction.setImmediate(Integer.parseInt(parts[3]));  // Immediate
                         }
                     }
@@ -341,6 +368,13 @@ public class InstructionParser {
         } catch (Exception e) {
             System.err.println("Error parsing operands for " + instruction.getRawInstruction() + ": " + e.getMessage());
         }
+    }
+    
+    private RegisterType getRegisterType(String regStr) {
+        if (regStr.toUpperCase().startsWith("F")) {
+            return RegisterType.FLOATING;
+        }
+        return RegisterType.INTEGER;
     }
     
     /**

@@ -140,6 +140,12 @@ public class ReservationStation {
     public int getRemainingCycles() { return remainingCycles; }
     public void setRemainingCycles(int remainingCycles) { this.remainingCycles = remainingCycles; }
     
+    public void decrementRemainingCycles() {
+        if (this.remainingCycles > 0) {
+            this.remainingCycles--;
+        }
+    }
+
     public int getRobEntry() { return robEntry; }
     public void setRobEntry(int robEntry) { this.robEntry = robEntry; }
     
