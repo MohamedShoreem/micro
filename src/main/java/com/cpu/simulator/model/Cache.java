@@ -124,11 +124,11 @@ public class Cache {
      * @param data Data to write
      * @return Access latency in cycles
      */
-    public CacheAccessResult read(int address, int size) {
+    public CacheAccessResult write(int address, byte[] data) {
         // Validate address bounds
         if (address < 0 || address >= memory.getSize()) {
             System.err.println("ERROR: Invalid memory address: " + address);
-            return new CacheAccessResult(false, new byte[size], hitLatency);
+            return new CacheAccessResult(false, new byte[data.length], hitLatency);
         }
         
         int blockAddress = (address / blockSize) * blockSize;
