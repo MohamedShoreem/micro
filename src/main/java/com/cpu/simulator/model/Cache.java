@@ -124,7 +124,13 @@ public class Cache {
      * @param data Data to write
      * @return Access latency in cycles
      */
-    public CacheAccessResult write(int address, byte[] data) {
+    public CacheAccessResult read(int address, int size) {
+        // Validate address bounds
+        if (address < 0 || address >= memory.getSize()) {
+            System.err.println("ERROR: Invalid memory address: " + address);
+            return new CacheAccessResult(false, new byte[size], hitLatency);
+        }
+        
         int blockAddress = (address / blockSize) * blockSize;
         int index = (address / blockSize) % numCacheLines;
         int tag = address / (blockSize * numCacheLines);

@@ -37,6 +37,8 @@ public class InstructionParser {
         labels = new HashMap<>();
         List<Instruction> instructions = new ArrayList<>();
         
+        System.out.println("=== LOADING FILE: " + filePath + " ===");
+        
         // First pass: Identify labels
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
             String line;
@@ -49,10 +51,18 @@ public class InstructionParser {
                 }
                 
                 // Check for labels (format: LABEL:)
-                if (line.contains(":") && !line.contains("(")) {
-                    String label = line.substring(0, line.indexOf(":")).trim();
-                    labels.put(label, instructionIndex);
-                    line = line.substring(line.indexOf(":") + 1).trim();
+                // Labels come before any parentheses in memory addressing
+                if (line.contains(":")) {
+                    int colonIndex = line.indexOf(":");
+                    int parenIndex = line.indexOf("(");
+                    // Only treat as label if colon comes before any parenthesis (or no parenthesis)
+                    if (parenIndex == -1 || colonIndex < parenIndex) {
+                        String label = line.substring(0, colonIndex).trim();
+                        String remaining = line.substring(colonIndex + 1).trim();
+                        labels.put(label, instructionIndex);
+                        System.out.println("First pass - Label: " + label + " at index " + instructionIndex + ", remaining: '" + remaining + "'");
+                        line = remaining;
+                    }
                 }
                 
                 if (!line.isEmpty()) {
@@ -73,18 +83,28 @@ public class InstructionParser {
                 
                 // Remove label if present
                 String definedLabel = null;
-                if (line.contains(":") && !line.contains("(")) {
-                    definedLabel = line.substring(0, line.indexOf(":")).trim();
-                    line = line.substring(line.indexOf(":") + 1).trim();
+                if (line.contains(":")) {
+                    int colonIndex = line.indexOf(":");
+                    int parenIndex = line.indexOf("(");
+                    // Only treat as label if colon comes before any parenthesis (or no parenthesis)
+                    if (parenIndex == -1 || colonIndex < parenIndex) {
+                        definedLabel = line.substring(0, colonIndex).trim();
+                        line = line.substring(colonIndex + 1).trim();
+                        System.out.println("Second pass - Found label: " + definedLabel + ", remaining: '" + line + "'");
+                    }
                 }
                 
                 if (!line.isEmpty()) {
+                    System.out.println("Parsing line: '" + line + "'");
                     Instruction instruction = parseLine(line);
                     if (instruction != null) {
                         if (definedLabel != null) {
                             instruction.setDefinedLabel(definedLabel);
                         }
                         instructions.add(instruction);
+                        System.out.println("Added instruction: " + instruction.getOperation());
+                    } else {
+                        System.out.println("WARNING: Failed to parse line: '" + line + "'");
                     }
                 }
             }

@@ -39,11 +39,17 @@ public class ReservationStation {
     
     // Execution tracking
     private int remainingCycles;  // Cycles left to complete execution
-    private int robEntry;         // Associated ROB entry number
+    
+    // Destination register (for write-back without ROB)
+    private int destination;      // Destination register number
+    private boolean isFloat;      // Is destination a FP register?
     
     // Result
     private double result;
     private boolean resultReady;
+    
+    // Timing tracking for multiple executions
+    private int timingIndex;  // Index in instructionTiming list for this execution
     
     public ReservationStation(String name, Type type) {
         this.name = name;
@@ -73,7 +79,8 @@ public class ReservationStation {
         this.storeValue = 0;
         this.storeTag = null;
         this.remainingCycles = 0;
-        this.robEntry = -1;
+        this.destination = -1;
+        this.isFloat = false;
         this.result = 0;
         this.resultReady = false;
     }
@@ -146,8 +153,11 @@ public class ReservationStation {
         }
     }
 
-    public int getRobEntry() { return robEntry; }
-    public void setRobEntry(int robEntry) { this.robEntry = robEntry; }
+    public int getDestination() { return destination; }
+    public void setDestination(int destination) { this.destination = destination; }
+    
+    public boolean isDestFloat() { return isFloat; }
+    public void setDestFloat(boolean isFloat) { this.isFloat = isFloat; }
     
     public double getResult() { return result; }
     public void setResult(double result) { 
@@ -157,6 +167,9 @@ public class ReservationStation {
     
     public boolean isResultReady() { return resultReady; }
     public void setResultReady(boolean ready) { this.resultReady = ready; }
+    
+    public int getTimingIndex() { return timingIndex; }
+    public void setTimingIndex(int timingIndex) { this.timingIndex = timingIndex; }
     
     @Override
     public String toString() {

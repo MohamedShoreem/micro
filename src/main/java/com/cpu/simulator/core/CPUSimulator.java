@@ -25,7 +25,6 @@ public class CPUSimulator {
     private List<ReservationStation> storeStations;   // Store units
     private List<ReservationStation> integerStations; // Integer units (DADDI, DSUBI, etc.)
     
-    private List<ReorderBufferEntry> reorderBuffer;   // ROB
     private RegisterStatus registerStatus;
     
     // Instruction queue
@@ -35,9 +34,11 @@ public class CPUSimulator {
     // Simulation state
     private int clockCycle;
     private boolean running;
+    private boolean branchPending;  // True when a branch is executing, blocks issue
     
-    private int robHead;  // Points to the next entry to commit
-    private int robTail;  // Points to the next free entry
+    // Instruction timing tracking: [issue, executionStart, executionEnd, writeResult]
+    private List<int[]> instructionTiming;
+    private List<Instruction> timingInstructions; // Maps timing entries to instructions
     
     public CPUSimulator() {
         registerFile = new RegisterFile();
@@ -51,7 +52,6 @@ public class CPUSimulator {
         storeStations = new ArrayList<>();
         integerStations = new ArrayList<>();
         
-        reorderBuffer = new ArrayList<>();
         registerStatus = new RegisterStatus();
         instructionQueue = new ArrayList<>();
         
@@ -80,10 +80,6 @@ public class CPUSimulator {
         integerStations.clear();
         for (int i = 0; i < config.getNumIntegerStations(); i++) integerStations.add(new ReservationStation("Int" + (i + 1), ReservationStation.Type.INTEGER));
         
-        // Re-initialize ROB
-        reorderBuffer.clear();
-        for (int i = 0; i < config.getRobSize(); i++) reorderBuffer.add(new ReorderBufferEntry(i));
-        
         // Configure Cache
         cache.configure(config.getCacheBlockSize(), config.getCacheSize(), config.getCacheHitLatency(), config.getCacheMissPenalty());
     }
@@ -93,6 +89,12 @@ public class CPUSimulator {
             InstructionParser parser = new InstructionParser();
             instructionQueue = parser.loadInstructions(filePath);
             programCounter = 0;
+            
+            // Initialize timing tracking: [issue, executionStart, executionEnd, writeResult]
+            instructionTiming = new ArrayList<>();
+            timingInstructions = new ArrayList<>();
+            // Don't pre-populate - timing entries are created when instructions are issued
+            
             System.out.println("Loaded " + instructionQueue.size() + " instructions");
         } catch (Exception e) {
             System.err.println("Error loading program: " + e.getMessage());
@@ -115,29 +117,26 @@ public class CPUSimulator {
         for (ReservationStation rs : loadStations) rs.reset();
         for (ReservationStation rs : storeStations) rs.reset();
         for (ReservationStation rs : integerStations) rs.reset();
-        for (ReorderBufferEntry entry : reorderBuffer) entry.reset();
         
         registerStatus.reset();
         
         programCounter = 0;
         clockCycle = 0;
         running = false;
-        robHead = 0;
-        robTail = 0;
+        branchPending = false;
     }
     
     public void executeCycle() {
-        if (!running && programCounter >= instructionQueue.size() && isROBEmpty()) return;
+        if (!running && programCounter >= instructionQueue.size() && allStationsEmpty()) return;
         
         running = true;
         clockCycle++;
         
-        // Pipeline Stages
-        // Order: Commit -> Execute -> Write Result -> Issue
-        // This ensures that results written in this cycle are not used for execution until the next cycle
-        commitStage();
-        executeStage();
+        // Pipeline Stages (No ROB - direct execution)
+        // Order: Write Result -> Execute -> Issue
+        // Write-back happens directly from reservation stations
         writeResultStage();
+        executeStage();
         issueStage();
         
         checkCompletion();
@@ -146,9 +145,8 @@ public class CPUSimulator {
     private void issueStage() {
         if (programCounter >= instructionQueue.size()) return;
         
-        // Check if ROB is full
-        int nextRob = (robTail + 1) % config.getRobSize();
-        if (nextRob == robHead && !reorderBuffer.get(robHead).isEmpty()) return; // ROB Full
+        // No branch prediction: block issue if branch is pending
+        if (branchPending) return;
         
         Instruction inst = instructionQueue.get(programCounter);
         
@@ -167,86 +165,114 @@ public class CPUSimulator {
         
         if (freeRs == null) return; // No free RS
         
-        // Allocate ROB
-        ReorderBufferEntry robEntry = reorderBuffer.get(robTail);
-        robEntry.reset();
-        robEntry.setState(ReorderBufferEntry.State.ISSUED);
-        robEntry.setInstruction(inst);
-        robEntry.setDestination(inst.getRd());
-        robEntry.setFloat(inst.isFloatingPoint());
-        
         // Allocate RS
         freeRs.reset();
         freeRs.setBusy(true);
         freeRs.setInstruction(inst);
         freeRs.setOp(inst.getOperation());
-        freeRs.setRobEntry(robTail);
         // Set remaining cycles to execution cycles (latency value represents execution cycles)
         freeRs.setRemainingCycles(config.getLatency(inst.getOperation()));
         
-        // Handle Operands
+        // Track issue time - create new timing entry for this execution
+        int timingIndex = instructionTiming.size();
+        instructionTiming.add(new int[]{clockCycle, -1, -1, -1}); // [issue, execStart, execEnd, writeResult]
+        timingInstructions.add(inst); // Track which instruction this timing entry represents
+        freeRs.setTimingIndex(timingIndex);
+        
+        // Handle Operands FIRST (before setting destination to avoid circular dependency)
         handleOperands(freeRs, inst);
         
-        // Update Register Status (Rename)
+        // Set destination register for write-back AFTER reading operands
         if (!inst.isStore() && !inst.isBranch()) {
             boolean isFloat = inst.getDestRegType() == Instruction.RegisterType.FLOATING;
-            // For Loads, destination is Rt (e.g., L.D F0, 0(R1) -> F0 is Rt)
-            // For R-type, destination is Rd
-            int destReg = inst.isLoad() ? inst.getRt() : inst.getRd();
+            // For I-type (Loads, ADDI, DADDI, etc.), destination is Rt
+            // For R-type (ADD, SUB, MUL, etc.), destination is Rd
+            int destReg;
+            if (inst.getType() == Instruction.InstructionType.I_TYPE) {
+                destReg = inst.getRt();
+            } else {
+                destReg = inst.getRd();
+            }
             
-            registerStatus.setStatus(destReg, robTail, isFloat);
-            robEntry.setDestination(destReg);
+            freeRs.setDestination(destReg);
+            freeRs.setDestFloat(isFloat);
+            
+            // Update Register Status (Rename) - use station name instead of ROB number
+            registerStatus.setStatus(destReg, freeRs.getName(), isFloat);
+            System.out.println("Issued " + inst.getOperation() + " to " + freeRs.getName() + ", dest=R" + destReg);
+        }
+        
+        // If this is a branch, set pending flag
+        if (inst.isBranch()) {
+            branchPending = true;
         }
         
         // Advance
-        robTail = nextRob;
         programCounter++;
     }
     
     private void handleOperands(ReservationStation rs, Instruction inst) {
-        // Source 1 (Rs) - For Load/Store this is the base address register
+        // Source 1 (Rs) - For Loads: base address; For Stores: base address
         int rsReg = inst.getRs();
         // Use explicit register type from parser
-        boolean rsIsFloat = inst.getSrc1RegType() == Instruction.RegisterType.FLOATING;
+        // For stores: Rs is base address (Src2Type), Rt is value to store (Src1Type)
+        boolean rsIsFloat = inst.isStore() ? 
+            (inst.getSrc2RegType() == Instruction.RegisterType.FLOATING) :
+            (inst.getSrc1RegType() == Instruction.RegisterType.FLOATING);
         
-        Integer qj = registerStatus.getStatus(rsReg, rsIsFloat);
+        String qj = registerStatus.getStatus(rsReg, rsIsFloat);
         if (qj != null) {
-            // Check if the ROB entry has the value ready
-            if (reorderBuffer.get(qj).isReady()) {
-                rs.setVj(reorderBuffer.get(qj).getValue());
+            // Check if the station has the value ready
+            ReservationStation producerStation = findStationByName(qj);
+            if (producerStation != null && producerStation.isResultReady()) {
+                double value = producerStation.getResult();
+                rs.setVj(value);
                 rs.setQj(null);
+                System.out.println("Operand Rs: R" + rsReg + " has dependency " + qj + " (ready), value=" + value);
             } else {
-                // Set dependency tag
-                rs.setQj(String.valueOf(qj));
+                // Set dependency tag (station name)
+                rs.setQj(qj);
                 rs.setVj(0); // Clear value
+                System.out.println("Operand Rs: R" + rsReg + " has dependency " + qj + " (not ready)");
             }
         } else {
             // Read directly from register file
-            rs.setVj(registerFile.read(rsReg, rsIsFloat));
+            double value = registerFile.read(rsReg, rsIsFloat);
+            rs.setVj(value);
             rs.setQj(null);
+            System.out.println("Operand Rs: R" + rsReg + " read from register file, value=" + value);
         }
         
         // Source 2 (Rt) - For R-type, Store value, or Branch
         if (inst.getType() == Instruction.InstructionType.R_TYPE || inst.isStore() || inst.isBranch()) {
             int rtReg = inst.getRt();
             // Use explicit register type from parser
-            boolean rtIsFloat = inst.getSrc2RegType() == Instruction.RegisterType.FLOATING;
+            // For stores: Rt is value to store (Src1Type), not Src2Type
+            boolean rtIsFloat = inst.isStore() ? 
+                (inst.getSrc1RegType() == Instruction.RegisterType.FLOATING) :
+                (inst.getSrc2RegType() == Instruction.RegisterType.FLOATING);
             
-            Integer qk = registerStatus.getStatus(rtReg, rtIsFloat);
+            String qk = registerStatus.getStatus(rtReg, rtIsFloat);
             if (qk != null) {
-                // Check if the ROB entry has the value ready
-                if (reorderBuffer.get(qk).isReady()) {
-                    rs.setVk(reorderBuffer.get(qk).getValue());
+                // Check if the station has the value ready
+                ReservationStation producerStation = findStationByName(qk);
+                if (producerStation != null && producerStation.isResultReady()) {
+                    double value = producerStation.getResult();
+                    rs.setVk(value);
                     rs.setQk(null);
+                    System.out.println("Operand Rt: R" + rtReg + " has dependency " + qk + " (ready), value=" + value);
                 } else {
-                    // Set dependency tag
-                    rs.setQk(String.valueOf(qk));
+                    // Set dependency tag (station name)
+                    rs.setQk(qk);
                     rs.setVk(0); // Clear value
+                    System.out.println("Operand Rt: R" + rtReg + " has dependency " + qk + " (not ready)");
                 }
             } else {
                 // Read directly from register file
-                rs.setVk(registerFile.read(rtReg, rtIsFloat));
+                double value = registerFile.read(rtReg, rtIsFloat);
+                rs.setVk(value);
                 rs.setQk(null);
+                System.out.println("Operand Rt: R" + rtReg + " read from register file, value=" + value);
             }
         } else {
             // Immediate for I-type (Load, ADDI)
@@ -266,13 +292,8 @@ public class CPUSimulator {
         
         for (ReservationStation rs : allStations) {
             if (rs.isBusy() && !rs.isResultReady()) {
-                // CRITICAL: Check if operands are ready (Qj=0, Qk=0)
+                // CRITICAL: Check if operands are ready (Qj=null, Qk=null)
                 if (rs.getQj() == null && rs.getQk() == null) {
-                    
-                    // Mark as executing on first cycle
-                    if (rs.getRemainingCycles() == config.getLatency(rs.getInstruction().getOperation())) {
-                        reorderBuffer.get(rs.getRobEntry()).setState(ReorderBufferEntry.State.EXECUTING);
-                    }
                     
                     // Special handling for Load/Store address calculation
                     if (rs.getInstruction().isMemoryOp() && !rs.isAddressReady()) {
@@ -280,6 +301,21 @@ public class CPUSimulator {
                         int effectiveAddr = (int)rs.getVj() + rs.getInstruction().getImmediate();
                         rs.setAddress(effectiveAddr);
                         rs.setAddressReady(true);
+                    }
+                    
+                    // For stores, check memory conflicts BEFORE starting execution
+                    if (rs.getInstruction().isStore() && rs.isAddressReady()) {
+                        if (checkMemoryConflict(rs)) {
+                            continue; // Skip this store - wait for conflicts to clear
+                        }
+                    }
+                    
+                    // Track execution start (first time we decrement)
+                    int timingIndex = rs.getTimingIndex();
+                    if (timingIndex >= 0 && timingIndex < instructionTiming.size()) {
+                        if (instructionTiming.get(timingIndex)[1] == -1) {
+                            instructionTiming.get(timingIndex)[1] = clockCycle; // Execution start cycle
+                        }
                     }
                     
                     // CRITICAL: Decrement first
@@ -317,29 +353,46 @@ public class CPUSimulator {
                                     // Access Cache
                                     int size = getAccessSize(rs.getInstruction().getOperation());
                                     Cache.CacheAccessResult access = cache.read(rs.getAddress(), size);
+                                    // Add miss penalty if cache miss
                                     if (!access.isHit()) {
-                                        // Miss penalty handled by cache latency config?
-                                        // We should ideally add penalty cycles here if it's a miss
-                                        // But for now we proceed.
+                                        rs.setRemainingCycles(config.getCacheMissPenalty());
+                                        ready = false; // Continue execution for miss penalty cycles
+                                    } else {
+                                        result = getMemoryValue(rs.getAddress(), rs.getInstruction().getOperation());
                                     }
-                                    result = getMemoryValue(rs.getAddress(), rs.getInstruction().getOperation());
                                 }
                                 break;
                                 
                             case SW: case SD: case S_D: case S_S:
-                                // Store: Result is the address (for ROB)
+                                // Store: Result is the address
                                 // Value to store is in Vk
+                                // (Memory conflicts already checked before execution starts)
                                 result = rs.getAddress();
                                 break;
                                 
-                            case BEQ: result = (rs.getVj() == rs.getVk()) ? 1.0 : 0.0; break;
-                            case BNE: result = (rs.getVj() != rs.getVk()) ? 1.0 : 0.0; break;
+                            case BEQ: 
+                                result = (rs.getVj() == rs.getVk()) ? 1.0 : 0.0;
+                                System.out.println("BEQ: Vj=" + rs.getVj() + " Vk=" + rs.getVk() + " result=" + result);
+                                // Handle branch
+                                handleBranchResult(rs, result == 1.0);
+                                break;
+                            case BNE: 
+                                result = (rs.getVj() != rs.getVk()) ? 1.0 : 0.0;
+                                System.out.println("BNE: Vj=" + rs.getVj() + " Vk=" + rs.getVk() + " result=" + result);
+                                // Handle branch
+                                handleBranchResult(rs, result == 1.0);
+                                break;
                         }
                         
                         if (ready) {
                             rs.setResult(result);
                             rs.setResultReady(true);
-                            // Don't update ROB state here - it's already EXECUTING
+                            
+                            // Track execution complete time ONLY when truly ready (no more penalties)
+                            int timingIdx = rs.getTimingIndex();
+                            if (timingIdx >= 0 && timingIdx < instructionTiming.size()) {
+                                instructionTiming.get(timingIdx)[2] = clockCycle; // Execution complete cycle
+                            }
                         }
                     }
                 }
@@ -364,98 +417,103 @@ public class CPUSimulator {
         }
         if (winner == null) winner = readyStations.get(0);
         
-        // Broadcast
+        // Broadcast result
         double result = winner.getResult();
-        int robTag = winner.getRobEntry();
+        String stationName = winner.getName();
         
         // Broadcast on CDB: Update waiting RSs
         for (ReservationStation rs : getAllStations()) {
             if (rs.isBusy() && !rs.isResultReady()) {
-                if (rs.getQj() != null && rs.getQj().equals(String.valueOf(robTag))) {
+                if (rs.getQj() != null && rs.getQj().equals(stationName)) {
                     rs.setVj(result);
                     rs.setQj(null);
                 }
-                if (rs.getQk() != null && rs.getQk().equals(String.valueOf(robTag))) {
+                if (rs.getQk() != null && rs.getQk().equals(stationName)) {
                     rs.setVk(result);
                     rs.setQk(null);
                 }
             }
         }
         
-        // Update ROB
-        ReorderBufferEntry robEntry = reorderBuffer.get(robTag);
-        robEntry.setValue(result);
-        robEntry.setReady(true);
-        robEntry.setState(ReorderBufferEntry.State.WRITE_RESULT);
+        // Track write result time
+        int timingIndex = winner.getTimingIndex();
+        if (timingIndex >= 0 && timingIndex < instructionTiming.size()) {
+            instructionTiming.get(timingIndex)[3] = clockCycle; // Write result cycle
+        }
         
-        // For Store, we also need to pass the value to store (Vk)
-        if (winner.getType() == ReservationStation.Type.STORE) {
-            robEntry.setMemoryAddress((int)result); // Result of Store exec is address
-            robEntry.setValue(winner.getVk());      // Value to store
+        // Clear branch pending flag when branch writes back
+        if (winner.getInstruction().isBranch()) {
+            branchPending = false;
+            System.out.println("Branch completed write-back, clearing branchPending");
+        }
+        
+        // Write back to register file (direct write-back without ROB)
+        if (!winner.getInstruction().isStore() && !winner.getInstruction().isBranch()) {
+            int dest = winner.getDestination();
+            boolean isFloat = winner.isDestFloat();
+            registerFile.write(dest, result, isFloat);
+            
+            // Clear register status if this station still owns it
+            String currentStatus = registerStatus.getStatus(dest, isFloat);
+            if (stationName.equals(currentStatus)) {
+                registerStatus.clearStatus(dest, isFloat);
+            }
+        }
+        
+        // Handle Store instructions
+        if (winner.getInstruction().isStore()) {
+            int addr = (int)result;  // Address
+            double val = winner.getVk();  // Value to store
+            
+            switch (winner.getInstruction().getOperation()) {
+                case SW: memory.writeWord(addr, (int)val); break;
+                case SD: memory.writeDoubleWord(addr, (long)val); break;
+                case S_D: memory.writeDouble(addr, val); break;
+                case S_S: memory.writeSingle(addr, (float)val); break;
+            }
         }
         
         // Free RS
         winner.reset();
     }
     
-    private void commitStage() {
-        ReorderBufferEntry head = reorderBuffer.get(robHead);
+    private void handleBranchResult(ReservationStation branchRs, boolean taken) {
+        // Don't clear branchPending here - wait until write-back stage
         
-        if (head.getState() == ReorderBufferEntry.State.WRITE_RESULT && head.isReady()) {
-            Instruction inst = head.getInstruction();
-            
-            // Handle Store
-            if (inst.isStore()) {
-                int addr = head.getMemoryAddress();
-                double val = head.getValue();
-                
-                switch (inst.getOperation()) {
-                    case SW: memory.writeWord(addr, (int)val); break;
-                    case SD: memory.writeDoubleWord(addr, (long)val); break;
-                    case S_D: memory.writeDouble(addr, val); break;
-                    case S_S: memory.writeSingle(addr, (float)val); break;
-                }
+        System.out.println("Branch result: taken=" + taken + ", PC=" + programCounter);
+        
+        if (taken) {
+            // Branch taken - Jump to target without flushing
+            String label = branchRs.getInstruction().getLabel();
+            System.out.println("Branch target label: " + label);
+            int targetIndex = findLabelIndex(label);
+            System.out.println("Target index: " + targetIndex);
+            if (targetIndex != -1) {
+                programCounter = targetIndex;
+                System.out.println("Jumped to PC=" + programCounter);
+                // NO FLUSH - old instructions continue executing
+            } else {
+                System.out.println("ERROR: Label not found!");
             }
-            // Handle Branch
-            else if (inst.isBranch()) {
-                boolean taken = head.getValue() == 1.0;
-                if (taken) {
-                    // Branch taken - Flush and jump
-                    String label = inst.getLabel();
-                    int targetIndex = findLabelIndex(label);
-                    if (targetIndex != -1) {
-                        programCounter = targetIndex;
-                        flushPipeline();
-                        return; 
-                    }
-                }
-            }
-            // Handle Register Write
-            else {
-                int dest = head.getDestination();
-                boolean isFloat = head.isFloat();
-                
-                registerFile.write(dest, head.getValue(), isFloat);
-                
-                // Update Register Status if this ROB entry is still the latest
-                Integer currentStatus = registerStatus.getStatus(dest, isFloat);
-                if (currentStatus != null && currentStatus == robHead) {
-                    registerStatus.clearStatus(dest, isFloat);
-                }
-            }
-            
-            head.setState(ReorderBufferEntry.State.COMMIT);
-            head.reset(); // Free ROB entry
-            robHead = (robHead + 1) % config.getRobSize();
         }
+        // If not taken, just continue with PC already incremented
     }
     
     private void flushPipeline() {
-        for (ReservationStation rs : getAllStations()) rs.reset();
-        for (ReorderBufferEntry entry : reorderBuffer) entry.reset();
+        // Reset all reservation stations and register status
+        for (ReservationStation rs : getAllStations()) {
+            rs.reset();
+        }
         registerStatus.reset();
-        robHead = 0;
-        robTail = 0;
+    }
+    
+    private ReservationStation findStationByName(String name) {
+        for (ReservationStation rs : getAllStations()) {
+            if (rs.getName().equals(name)) {
+                return rs;
+            }
+        }
+        return null;
     }
     
     private int findLabelIndex(String label) {
@@ -469,19 +527,40 @@ public class CPUSimulator {
     }
     
     private boolean checkStoreConflict(ReservationStation loadRs) {
-        int loadRob = loadRs.getRobEntry();
         int addr = loadRs.getAddress();
         
-        int curr = robHead;
-        while (curr != loadRob) {
-            ReorderBufferEntry entry = reorderBuffer.get(curr);
-            if (!entry.isEmpty() && entry.getInstruction().isStore()) {
-                if (entry.getMemoryAddress() == addr) {
-                    return true; // Conflict
+        // Check all store stations for address conflicts
+        for (ReservationStation rs : storeStations) {
+            if (rs.isBusy() && rs.isAddressReady()) {
+                if (rs.getAddress() == addr && !rs.isResultReady()) {
+                    return true; // Conflict - store to same address is pending
                 }
             }
-            curr = (curr + 1) % config.getRobSize();
         }
+        return false;
+    }
+    
+    private boolean checkMemoryConflict(ReservationStation storeRs) {
+        int addr = storeRs.getAddress();
+        
+        // Check all load stations - store must wait for loads to same address
+        for (ReservationStation rs : loadStations) {
+            if (rs.isBusy() && rs.isAddressReady() && rs != storeRs) {
+                if (rs.getAddress() == addr && !rs.isResultReady()) {
+                    return true; // Conflict - load from same address is pending
+                }
+            }
+        }
+        
+        // Check all other store stations - store must wait for earlier stores to same address
+        for (ReservationStation rs : storeStations) {
+            if (rs.isBusy() && rs.isAddressReady() && rs != storeRs) {
+                if (rs.getAddress() == addr && !rs.isResultReady()) {
+                    return true; // Conflict - another store to same address is pending
+                }
+            }
+        }
+        
         return false;
     }
     
@@ -507,6 +586,16 @@ public class CPUSimulator {
         return all;
     }
     
+    private int findInstructionIndex(Instruction inst) {
+        if (inst == null || instructionQueue == null) return -1;
+        for (int i = 0; i < instructionQueue.size(); i++) {
+            if (instructionQueue.get(i) == inst) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    
     private int getAccessSize(Instruction.Operation op) {
         switch (op) {
             case LW: case SW: case L_S: case S_S: return 4;
@@ -526,14 +615,17 @@ public class CPUSimulator {
     }
     
     private void checkCompletion() {
-        if (programCounter >= instructionQueue.size() && isROBEmpty()) {
+        if (programCounter >= instructionQueue.size() && allStationsEmpty()) {
             running = false;
             System.out.println("Simulation complete at clock cycle " + clockCycle);
         }
     }
     
-    private boolean isROBEmpty() {
-        return robHead == robTail && reorderBuffer.get(robHead).isEmpty();
+    private boolean allStationsEmpty() {
+        for (ReservationStation rs : getAllStations()) {
+            if (rs.isBusy()) return false;
+        }
+        return true;
     }
     
     // Getters
@@ -545,7 +637,6 @@ public class CPUSimulator {
     public List<ReservationStation> getLoadStations() { return loadStations; }
     public List<ReservationStation> getStoreStations() { return storeStations; }
     public List<ReservationStation> getIntegerStations() { return integerStations; }
-    public List<ReorderBufferEntry> getReorderBuffer() { return reorderBuffer; }
     public RegisterStatus getRegisterStatus() { return registerStatus; }
     public int getClockCycle() { return clockCycle; }
     public int getProgramCounter() { return programCounter; }
@@ -553,4 +644,6 @@ public class CPUSimulator {
     public void setRunning(boolean running) { this.running = running; }
     public List<Instruction> getInstructionQueue() { return instructionQueue; }
     public SimulatorConfig getConfig() { return config; }
+    public List<int[]> getInstructionTiming() { return instructionTiming; }
+    public List<Instruction> getTimingInstructions() { return timingInstructions; }
 }

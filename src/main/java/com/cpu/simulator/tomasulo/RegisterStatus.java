@@ -1,26 +1,26 @@
 package com.cpu.simulator.tomasulo;
 
 /**
- * RegisterStatus tracks which ROB entry will write to each register (register renaming).
+ * RegisterStatus tracks which reservation station will write to each register (register renaming).
  * Separate tracking for integer registers (R0-R31) and floating-point registers (F0-F31).
  */
 public class RegisterStatus {
-    private Integer[] intStatus;    // ROB entry number for integer registers
-    private Integer[] floatStatus;  // ROB entry number for FP registers
+    private String[] intStatus;    // Station name for integer registers (e.g., "Int1", "Add1")
+    private String[] floatStatus;  // Station name for FP registers
     private static final int NUM_REGISTERS = 32;
     
     public RegisterStatus() {
-        intStatus = new Integer[NUM_REGISTERS];
-        floatStatus = new Integer[NUM_REGISTERS];
+        intStatus = new String[NUM_REGISTERS];
+        floatStatus = new String[NUM_REGISTERS];
         reset();
     }
     
     /**
-     * Get the ROB entry for an integer register
+     * Get the reservation station name for an integer register
      * @param regNum Register number
-     * @return ROB entry number, null if no pending write
+     * @return Station name, null if no pending write
      */
-    public Integer getIntStatus(int regNum) {
+    public String getIntStatus(int regNum) {
         if (regNum < 0 || regNum >= NUM_REGISTERS) {
             return null;
         }
@@ -28,11 +28,11 @@ public class RegisterStatus {
     }
     
     /**
-     * Get the ROB entry for a floating-point register
+     * Get the reservation station name for a floating-point register
      * @param regNum Register number
-     * @return ROB entry number, null if no pending write
+     * @return Station name, null if no pending write
      */
-    public Integer getFloatStatus(int regNum) {
+    public String getFloatStatus(int regNum) {
         if (regNum < 0 || regNum >= NUM_REGISTERS) {
             return null;
         }
@@ -43,50 +43,50 @@ public class RegisterStatus {
      * Get status based on register type
      * @param regNum Register number
      * @param isFloat true for FP register, false for integer
-     * @return ROB entry number, null if no pending write
+     * @return Station name, null if no pending write
      */
-    public Integer getStatus(int regNum, boolean isFloat) {
+    public String getStatus(int regNum, boolean isFloat) {
         return isFloat ? getFloatStatus(regNum) : getIntStatus(regNum);
     }
     
     /**
-     * Set the ROB entry for an integer register
+     * Set the reservation station for an integer register
      * @param regNum Register number
-     * @param robEntry ROB entry number
+     * @param stationName Station name (e.g., "Int1", "Add1")
      */
-    public void setIntStatus(int regNum, Integer robEntry) {
+    public void setIntStatus(int regNum, String stationName) {
         if (regNum < 0 || regNum >= NUM_REGISTERS) {
             return;
         }
         // R0 always has no pending writes
         if (regNum != 0) {
-            intStatus[regNum] = robEntry;
+            intStatus[regNum] = stationName;
         }
     }
     
     /**
-     * Set the ROB entry for a floating-point register
+     * Set the reservation station for a floating-point register
      * @param regNum Register number
-     * @param robEntry ROB entry number
+     * @param stationName Station name
      */
-    public void setFloatStatus(int regNum, Integer robEntry) {
+    public void setFloatStatus(int regNum, String stationName) {
         if (regNum < 0 || regNum >= NUM_REGISTERS) {
             return;
         }
-        floatStatus[regNum] = robEntry;
+        floatStatus[regNum] = stationName;
     }
     
     /**
      * Set status based on register type
      * @param regNum Register number
-     * @param robEntry ROB entry number
+     * @param stationName Station name
      * @param isFloat true for FP register, false for integer
      */
-    public void setStatus(int regNum, Integer robEntry, boolean isFloat) {
+    public void setStatus(int regNum, String stationName, boolean isFloat) {
         if (isFloat) {
-            setFloatStatus(regNum, robEntry);
+            setFloatStatus(regNum, stationName);
         } else {
-            setIntStatus(regNum, robEntry);
+            setIntStatus(regNum, stationName);
         }
     }
     
@@ -137,17 +137,17 @@ public class RegisterStatus {
     
     /**
      * Get all integer register status for display
-     * @return Array of ROB entry numbers
+     * @return Array of station names
      */
-    public Integer[] getAllIntStatus() {
+    public String[] getAllIntStatus() {
         return intStatus.clone();
     }
     
     /**
      * Get all FP register status for display
-     * @return Array of ROB entry numbers
+     * @return Array of station names
      */
-    public Integer[] getAllFloatStatus() {
+    public String[] getAllFloatStatus() {
         return floatStatus.clone();
     }
 }
